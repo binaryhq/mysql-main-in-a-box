@@ -10,11 +10,17 @@ export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 export LC_TYPE=en_US.UTF-8
 
+# On Mondays, i.e. once a week, send the administrator a report of total emails
+# sent and received so the admin might notice server abuse.
+if [ `date "+%u"` -eq 1 ]; then
+    management/mail_log.py -t week | management/email_administrator.py "Mail-in-a-Box Usage Report"
+fi
+
 # Take a backup.
-management/backup.py | management/email_administrator.py "Backup Status"
+management/backup.py 2>&1 | management/email_administrator.py "Backup Status"
 
 # Provision any new certificates for new domains or domains with expiring certificates.
-management/ssl_certificates.py --headless | management/email_administrator.py "Error Provisioning TLS Certificate"
+management/ssl_certificates.py -q  2>&1 | management/email_administrator.py "TLS Certificate Provisioning Result"
 
 # Run status checks and email the administrator if anything changed.
-management/status_checks.py --show-changes | management/email_administrator.py "Status Checks Change Notice"
+management/status_checks.py --show-changes  2>&1 | management/email_administrator.py "Status Checks Change Notice"

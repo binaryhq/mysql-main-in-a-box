@@ -44,14 +44,25 @@
 
 
 <p class="alert" role="alert">
-    <span class="glyphicon glyphicon-info-sign"></span>
-    You may encounter zone file errors when attempting to create a TXT record with a long string.
-    <a href="http://tools.ietf.org/html/rfc4408#section-3.1.3">RFC 4408</a> states a TXT record is allowed to contain
-    multiple strings, and this technique can be used to construct records that would exceed the 255-byte maximum length.
-    You may need to adopt this technique when adding DomainKeys. Use a tool like <code>named-checkzone</code> to
-    validate your zone file.
+	<span class="glyphicon glyphicon-info-sign"></span>
+	You may encounter zone file errors when attempting to create a TXT record with a long string.
+	<a href="https://tools.ietf.org/html/rfc4408#section-3.1.3">RFC 4408</a> states a TXT record is allowed to contain multiple strings, and this technique can be used to construct records that would exceed the 255-byte maximum length.
+	You may need to adopt this technique when adding DomainKeys. Use a tool like <code>named-checkzone</code> to validate your zone file.
 </p>
 
+<h3>Download zonefile</h3>
+<p>You can download your zonefiles here or use the table of records below.</p>
+<form class="form-inline" role="form" onsubmit="do_download_zonefile(); return false;">
+    <div class="form-group">
+        <div class="form-group">
+            <label for="downloadZonefile" class="control-label sr-only">Zone</label>
+            <select id="downloadZonefile" class="form-control" style="width: auto"> </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Download</button>
+    </div>
+</form>
+
+<h3>Records</h3>
 
 <table id="external_dns_settings" class="table">
     <thead>
@@ -66,18 +77,30 @@
 </table>
 
 <script>
-    function show_external_dns() {
-        $('#external_dns_settings tbody').html("<tr><td colspan='2' class='text-muted'>Loading...</td></tr>")
-        api(
-                "/dns/dump",
-                "GET",
-                {},
-                function (zones) {
-                    $('#external_dns_settings tbody').html("");
-                    for (var j = 0; j < zones.length; j++) {
-                        var h = $("<tr class='heading'><td colspan='3'></td></tr>");
-                        h.find("td").text(zones[j][0]);
-                        $('#external_dns_settings tbody').append(h);
+function show_external_dns() {
+  api(
+    "/dns/zones",
+    "GET",
+    { },
+    function(data) {
+        var zones = $('#downloadZonefile');
+        zones.text('');
+        for (var j = 0; j < data.length; j++) {
+            zones.append($('<option/>').text(data[j]));
+        }
+    });
+
+  $('#external_dns_settings tbody').html("<tr><td colspan='2' class='text-muted'>Loading...</td></tr>")
+  api(
+    "/dns/dump",
+    "GET",
+    { },
+    function(zones) {
+      $('#external_dns_settings tbody').html("");
+      for (var j = 0; j < zones.length; j++) {
+        var h = $("<tr class='heading'><td colspan='3'></td></tr>");
+        h.find("td").text(zones[j][0]);
+        $('#external_dns_settings tbody').append(h);
 
                         var r = zones[j][1];
                         for (var i = 0; i < r.length; i++) {
@@ -87,11 +110,26 @@
                             n.find('.value').text(r[i].value);
                             $('#external_dns_settings tbody').append(n);
 
-                            var n = $("<tr class='explanation'><td colspan='3'/></tr>");
-                            n.find('td').text(r[i].explanation);
-                            $('#external_dns_settings tbody').append(n);
-                        }
-                    }
-                })
-    }
+          var n = $("<tr class='explanation'><td colspan='3'/></tr>");
+          n.find('td').text(r[i].explanation);
+          $('#external_dns_settings tbody').append(n);
+        }
+      }
+    })
+}
+
+function do_download_zonefile() {
+    var zone = $('#downloadZonefile').val();
+
+    api(
+        "/dns/zonefile/"+ zone,
+        "GET",
+        {},
+        function(data) {
+            show_modal_error("Download Zonefile", $("<pre/>").text(data));
+        },
+        function(err) {
+            show_modal_error("Download Zonefile (Error)", $("<pre/>").text(err));
+        });
+}
 </script>

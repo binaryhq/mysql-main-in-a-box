@@ -11,37 +11,45 @@ from dns_update import get_custom_dns_config, get_dns_zones
 from ssl_certificates import get_ssl_certificates, get_domain_ssl_files, check_certificate
 from utils import shell, safe_domain_name, sort_domains
 
+def get_web_domains(env, include_www_redirects=True, include_auto=True, exclude_dns_elsewhere=True):
+	# What domains should we serve HTTP(S) for?
+	domains = set()
 
-def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True):
-    # What domains should we serve HTTP(S) for?
-    domains = set()
+	# Serve web for all mail domains so that we might at least
+	# provide auto-discover of email settings, and also a static website
+	# if the user wants to make one.
+	domains |= get_mail_domains(env)
 
-    # Serve web for all mail domains so that we might at least
-    # provide auto-discover of email settings, and also a static website
-    # if the user wants to make one.
-    domains |= get_mail_domains(env)
+	if include_www_redirects and include_auto:
+		# Add 'www.' subdomains that we want to provide default redirects
+		# to the main domain for. We'll add 'www.' to any DNS zones, i.e.
+		# the topmost of each domain we serve.
+		domains |= set('www.' + zone for zone, zonefile in get_dns_zones(env))
 
-    if include_www_redirects:
-        # Add 'www.' subdomains that we want to provide default redirects
-        # to the main domain for. We'll add 'www.' to any DNS zones, i.e.
-        # the topmost of each domain we serve.
-        domains |= set('www.' + zone for zone, zonefile in get_dns_zones(env))
+	if include_auto:
+		# Add Autoconfiguration domains for domains that there are user accounts at:
+		# 'autoconfig.' for Mozilla Thunderbird auto setup.
+		# 'autodiscover.' for ActiveSync autodiscovery (Z-Push).
+		domains |= set('autoconfig.' + maildomain for maildomain in get_mail_domains(env, users_only=True))
+		domains |= set('autodiscover.' + maildomain for maildomain in get_mail_domains(env, users_only=True))
 
-    if exclude_dns_elsewhere:
-        # ...Unless the domain has an A/AAAA record that maps it to a different
-        # IP address than this box. Remove those domains from our list.
-        domains -= get_domains_with_a_records(env)
+		# 'mta-sts.' for MTA-STS support for all domains that have email addresses.
+		domains |= set('mta-sts.' + maildomain for maildomain in get_mail_domains(env))
 
-    # Ensure the PRIMARY_HOSTNAME is in the list so we can serve webmail
-    # as well as Z-Push for Exchange ActiveSync. This can't be removed
-    # by a custom A/AAAA record and is never a 'www.' redirect.
-    domains.add(env['PRIMARY_HOSTNAME'])
+	if exclude_dns_elsewhere:
+		# ...Unless the domain has an A/AAAA record that maps it to a different
+		# IP address than this box. Remove those domains from our list.
+		domains -= get_domains_with_a_records(env)
 
-    # Sort the list so the nginx conf gets written in a stable order.
-    domains = sort_domains(domains, env)
+	# Ensure the PRIMARY_HOSTNAME is in the list so we can serve webmail
+	# as well as Z-Push for Exchange ActiveSync. This can't be removed
+	# by a custom A/AAAA record and is never a 'www.' redirect.
+	domains.add(env['PRIMARY_HOSTNAME'])
 
-    return domains
+	# Sort the list so the nginx conf gets written in a stable order.
+	domains = sort_domains(domains, env)
 
+	return domains
 
 def get_domains_with_a_records(env):
     domains = set()
@@ -118,79 +126,106 @@ def do_web_update(env):
 
 
 def make_domain_config(domain, templates, ssl_certificates, env):
-    # GET SOME VARIABLES
+	# GET SOME VARIABLES
 
-    # Where will its root directory be for static files?
-    root = get_web_root(domain, env)
+	# Where will its root directory be for static files?
+	root = get_web_root(domain, env)
 
-    # What private key and SSL certificate will we use for this domain?
-    tls_cert = get_domain_ssl_files(domain, ssl_certificates, env)
+	# What private key and SSL certificate will we use for this domain?
+	tls_cert = get_domain_ssl_files(domain, ssl_certificates, env)
 
-    # ADDITIONAL DIRECTIVES.
+	# ADDITIONAL DIRECTIVES.
 
-    nginx_conf_extra = ""
+	nginx_conf_extra = ""
 
-    # Because the certificate may change, we should recognize this so we
-    # can trigger an nginx update.
-    def hashfile(filepath):
-        import hashlib
-        sha1 = hashlib.sha1()
-        f = open(filepath, 'rb')
-        try:
-            sha1.update(f.read())
-        finally:
-            f.close()
-        return sha1.hexdigest()
+	# Because the certificate may change, we should recognize this so we
+	# can trigger an nginx update.
+	def hashfile(filepath):
+		import hashlib
+		sha1 = hashlib.sha1()
+		f = open(filepath, 'rb')
+		try:
+			sha1.update(f.read())
+		finally:
+			f.close()
+		return sha1.hexdigest()
+	nginx_conf_extra += "\t# ssl files sha1: %s / %s\n" % (hashfile(tls_cert["private-key"]), hashfile(tls_cert["certificate"]))
 
-    nginx_conf_extra += "# ssl files sha1: %s / %s\n" % (
-    hashfile(tls_cert["private-key"]), hashfile(tls_cert["certificate"]))
+	# Add in any user customizations in YAML format.
+	hsts = "yes"
+	nginx_conf_custom_fn = os.path.join(env["STORAGE_ROOT"], "www/custom.yaml")
+	if os.path.exists(nginx_conf_custom_fn):
+		yaml = rtyaml.load(open(nginx_conf_custom_fn))
+		if domain in yaml:
+			yaml = yaml[domain]
 
-    # Add in any user customizations in YAML format.
-    hsts = "yes"
-    nginx_conf_custom_fn = os.path.join(env["STORAGE_ROOT"], "www/custom.yaml")
-    if os.path.exists(nginx_conf_custom_fn):
-        yaml = rtyaml.load(open(nginx_conf_custom_fn))
-        if domain in yaml:
-            yaml = yaml[domain]
+			# any proxy or redirect here?
+			for path, url in yaml.get("proxies", {}).items():
+				# Parse some flags in the fragment of the URL.
+				pass_http_host_header = False
+				proxy_redirect_off = False
+				frame_options_header_sameorigin = False
+				m = re.search("#(.*)$", url)
+				if m:
+					for flag in m.group(1).split(","):
+						if flag == "pass-http-host":
+							pass_http_host_header = True
+						elif flag == "no-proxy-redirect":
+							proxy_redirect_off = True
+						elif flag == "frame-options-sameorigin":
+							frame_options_header_sameorigin = True
+					url = re.sub("#(.*)$", "", url)
 
-            # any proxy or redirect here?
-            for path, url in yaml.get("proxies", {}).items():
-                nginx_conf_extra += "\tlocation %s {\n\t\tproxy_pass %s;\n\t}\n" % (path, url)
-            for path, url in yaml.get("redirects", {}).items():
-                nginx_conf_extra += "\trewrite %s %s permanent;\n" % (path, url)
+				nginx_conf_extra += "\tlocation %s {" % path
+				nginx_conf_extra += "\n\t\tproxy_pass %s;" % url
+				if proxy_redirect_off:
+					nginx_conf_extra += "\n\t\tproxy_redirect off;"
+				if pass_http_host_header:
+					nginx_conf_extra += "\n\t\tproxy_set_header Host $http_host;"
+				if frame_options_header_sameorigin:
+					nginx_conf_extra += "\n\t\tproxy_set_header X-Frame-Options SAMEORIGIN;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Forwarded-Host $http_host;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Forwarded-Proto $scheme;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Real-IP $remote_addr;"
+				nginx_conf_extra += "\n\t}\n"
+			for path, alias in yaml.get("aliases", {}).items():
+				nginx_conf_extra += "\tlocation %s {" % path
+				nginx_conf_extra += "\n\t\talias %s;" % alias
+				nginx_conf_extra += "\n\t}\n"
+			for path, url in yaml.get("redirects", {}).items():
+				nginx_conf_extra += "\trewrite %s %s permanent;\n" % (path, url)
 
-            # override the HSTS directive type
-            hsts = yaml.get("hsts", hsts)
+			# override the HSTS directive type
+			hsts = yaml.get("hsts", hsts)
 
-    # Add the HSTS header.
-    if hsts == "yes":
-        nginx_conf_extra += "add_header Strict-Transport-Security max-age=31536000;\n"
-    elif hsts == "preload":
-        nginx_conf_extra += "add_header Strict-Transport-Security \"max-age=10886400; includeSubDomains; preload\";\n"
+	# Add the HSTS header.
+	if hsts == "yes":
+		nginx_conf_extra += "\tadd_header Strict-Transport-Security \"max-age=15768000\" always;\n"
+	elif hsts == "preload":
+		nginx_conf_extra += "\tadd_header Strict-Transport-Security \"max-age=15768000; includeSubDomains; preload\" always;\n"
 
-    # Add in any user customizations in the includes/ folder.
-    nginx_conf_custom_include = os.path.join(env["STORAGE_ROOT"], "www", safe_domain_name(domain) + ".conf")
-    if os.path.exists(nginx_conf_custom_include):
-        nginx_conf_extra += "\tinclude %s;\n" % (nginx_conf_custom_include)
-    # PUT IT ALL TOGETHER
+	# Add in any user customizations in the includes/ folder.
+	nginx_conf_custom_include = os.path.join(env["STORAGE_ROOT"], "www", safe_domain_name(domain) + ".conf")
+	if os.path.exists(nginx_conf_custom_include):
+		nginx_conf_extra += "\tinclude %s;\n" % (nginx_conf_custom_include)
+	# PUT IT ALL TOGETHER
 
-    # Combine the pieces. Iteratively place each template into the "# ADDITIONAL DIRECTIVES HERE" placeholder
-    # of the previous template.
-    nginx_conf = "# ADDITIONAL DIRECTIVES HERE\n"
-    for t in templates + [nginx_conf_extra]:
-        nginx_conf = re.sub("[ \t]*# ADDITIONAL DIRECTIVES HERE *\n", t, nginx_conf)
+	# Combine the pieces. Iteratively place each template into the "# ADDITIONAL DIRECTIVES HERE" placeholder
+	# of the previous template.
+	nginx_conf = "# ADDITIONAL DIRECTIVES HERE\n"
+	for t in templates + [nginx_conf_extra]:
+		nginx_conf = re.sub("[ \t]*# ADDITIONAL DIRECTIVES HERE *\n", t, nginx_conf)
 
-    # Replace substitution strings in the template & return.
-    nginx_conf = nginx_conf.replace("$STORAGE_ROOT", env['STORAGE_ROOT'])
-    nginx_conf = nginx_conf.replace("$HOSTNAME", domain)
-    nginx_conf = nginx_conf.replace("$ROOT", root)
-    nginx_conf = nginx_conf.replace("$SSL_KEY", tls_cert["private-key"])
-    nginx_conf = nginx_conf.replace("$SSL_CERTIFICATE", tls_cert["certificate"])
-    nginx_conf = nginx_conf.replace("$REDIRECT_DOMAIN",
-                                    re.sub(r"^www\.", "", domain))  # for default www redirects to parent domain
+	# Replace substitution strings in the template & return.
+	nginx_conf = nginx_conf.replace("$STORAGE_ROOT", env['STORAGE_ROOT'])
+	nginx_conf = nginx_conf.replace("$HOSTNAME", domain)
+	nginx_conf = nginx_conf.replace("$ROOT", root)
+	nginx_conf = nginx_conf.replace("$SSL_KEY", tls_cert["private-key"])
+	nginx_conf = nginx_conf.replace("$SSL_CERTIFICATE", tls_cert["certificate"])
+	nginx_conf = nginx_conf.replace("$REDIRECT_DOMAIN", re.sub(r"^www\.", "", domain)) # for default www redirects to parent domain
 
-    return nginx_conf
-
+	return nginx_conf
 
 def get_web_root(domain, env, test_exists=True):
     # Try STORAGE_ROOT/web/domain_name if it exists, but fall back to STORAGE_ROOT/web/default.
@@ -201,29 +236,33 @@ def get_web_root(domain, env, test_exists=True):
 
 
 def get_web_domains_info(env):
-    www_redirects = set(get_web_domains(env)) - set(get_web_domains(env, include_www_redirects=False))
-    has_root_proxy_or_redirect = set(get_web_domains_with_root_overrides(env))
-    ssl_certificates = get_ssl_certificates(env)
+	www_redirects = set(get_web_domains(env)) - set(get_web_domains(env, include_www_redirects=False))
+	has_root_proxy_or_redirect = set(get_web_domains_with_root_overrides(env))
+	ssl_certificates = get_ssl_certificates(env)
 
-    # for the SSL config panel, get cert status
-    def check_cert(domain):
-        tls_cert = get_domain_ssl_files(domain, ssl_certificates, env, allow_missing_cert=True)
-        if tls_cert is None: return ("danger", "No Certificate Installed")
-        cert_status, cert_status_details = check_certificate(domain, tls_cert["certificate"], tls_cert["private-key"])
-        if cert_status == "OK":
-            return ("success", "Signed & valid. " + cert_status_details)
-        elif cert_status == "SELF-SIGNED":
-            return ("warning", "Self-signed. Get a signed certificate to stop warnings.")
-        else:
-            return ("danger", "Certificate has a problem: " + cert_status)
+	# for the SSL config panel, get cert status
+	def check_cert(domain):
+		try:
+			tls_cert = get_domain_ssl_files(domain, ssl_certificates, env, allow_missing_cert=True)
+		except OSError: # PRIMARY_HOSTNAME cert is missing
+			tls_cert = None
+		if tls_cert is None: return ("danger", "No certificate installed.")
+		cert_status, cert_status_details = check_certificate(domain, tls_cert["certificate"], tls_cert["private-key"])
+		if cert_status == "OK":
+			return ("success", "Signed & valid. " + cert_status_details)
+		elif cert_status == "SELF-SIGNED":
+			return ("warning", "Self-signed. Get a signed certificate to stop warnings.")
+		else:
+			return ("danger", "Certificate has a problem: " + cert_status)
 
-    return [
-        {
-            "domain": domain,
-            "root": get_web_root(domain, env),
-            "custom_root": get_web_root(domain, env, test_exists=False),
-            "ssl_certificate": check_cert(domain),
-            "static_enabled": domain not in (www_redirects | has_root_proxy_or_redirect),
-        }
-        for domain in get_web_domains(env)
-        ]
+	return [
+		{
+			"domain": domain,
+			"root": get_web_root(domain, env),
+			"custom_root": get_web_root(domain, env, test_exists=False),
+			"ssl_certificate": check_cert(domain),
+			"static_enabled": domain not in (www_redirects | has_root_proxy_or_redirect),
+		}
+		for domain in get_web_domains(env)
+	]
+

@@ -18,8 +18,6 @@
       <string>PRIMARY_HOSTNAME</string>
       <key>CalDAVPort</key>
       <real>443</real>
-      <key>CalDAVPrincipalURL</key>
-      <string>/cloud/remote.php/caldav/calendars/</string>
       <key>CalDAVUseSSL</key>
       <true/>
       <key>PayloadDescription</key>
@@ -55,7 +53,7 @@
       <key>OutgoingMailServerHostName</key>
       <string>PRIMARY_HOSTNAME</string>
       <key>OutgoingMailServerPortNumber</key>
-      <integer>587</integer>
+      <integer>465</integer>
       <key>OutgoingMailServerUseSSL</key>
       <true/>
       <key>OutgoingPasswordSameAsIncomingPassword</key>

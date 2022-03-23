@@ -37,8 +37,16 @@ apt_install \
 # of active IMAP connections (at, say, 5 open connections per user that
 # would be 20 users). Set it to 250 times the number of cores this
 # machine has, so on a two-core machine that's 500 processes/100 users).
+# The `default_vsz_limit` is the maximum amount of virtual memory that
+# can be allocated. It should be set *reasonably high* to avoid allocation
+# issues with larger mailboxes. We're setting it to 1/3 of the total
+# available memory (physical mem + swap) to be sure.
+# See here for discussion:
+# - https://www.dovecot.org/list/dovecot/2012-August/137569.html
+# - https://www.dovecot.org/list/dovecot/2011-December/132455.html
 tools/editconf.py /etc/dovecot/conf.d/10-master.conf \
-	default_process_limit=$(echo "`nproc` * 250" | bc) \
+	default_process_limit=$(echo "$(nproc) * 250" | bc) \
+	default_vsz_limit=$(echo "$(free -tm  | tail -1 | awk '{print $2}') / 3" | bc)M \
 	log_path=/var/log/mail.log
 
 # The inotify `max_user_instances` default is 128, which constrains
@@ -70,13 +78,16 @@ tools/editconf.py /etc/dovecot/conf.d/10-auth.conf \
 	"auth_mechanisms=plain login"
 
 # Enable SSL, specify the location of the SSL certificate and private key files.
-# Disable obsolete SSL protocols and allow only good ciphers per http://baldric.net/2013/12/07/tls-ciphers-in-postfix-and-dovecot/.
+# Use Mozilla's "Intermediate" recommendations at https://ssl-config.mozilla.org/#server=dovecot&server-version=2.2.33&config=intermediate&openssl-version=1.1.1,
+# except that the current version of Dovecot does not have a TLSv1.3 setting, so we only use TLSv1.2.
 tools/editconf.py /etc/dovecot/conf.d/10-ssl.conf \
 	ssl=required \
 	"ssl_cert=<$STORAGE_ROOT/ssl/ssl_certificate.pem" \
 	"ssl_key=<$STORAGE_ROOT/ssl/ssl_private_key.pem" \
-	"ssl_protocols=!SSLv3 !SSLv2" \
-	"ssl_cipher_list=TLSv1+HIGH !SSLv2 !RC4 !aNULL !eNULL !3DES @STRENGTH"
+	"ssl_protocols=TLSv1.2" \
+	"ssl_cipher_list=ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384" \
+	"ssl_prefer_server_ciphers=no" \
+	"ssl_dh_parameters_length=2048"
 
 # Disable in-the-clear IMAP/POP because there is no reason for a user to transmit
 # login credentials outside of an encrypted connection. Only the over-TLS versions
@@ -124,8 +135,16 @@ service lmtp {
   }
 }
 
+# Enable imap-login on localhost to allow the user_external plugin
+# for Nextcloud to do imap authentication. (See #1577)
+service imap-login {
+  inet_listener imap {
+    address = 127.0.0.1
+    port = 143
+  }
+}
 protocol imap {
-  mail_max_userip_connections = 20
+  mail_max_userip_connections = 40
 }
 EOF
 
@@ -164,6 +183,7 @@ plugin {
   sieve_after = $STORAGE_ROOT/mail/sieve/global_after
   sieve = $STORAGE_ROOT/mail/sieve/%d/%n.sieve
   sieve_dir = $STORAGE_ROOT/mail/sieve/%d/%n
+  sieve_redirect_envelope_from = recipient
 }
 EOF
 

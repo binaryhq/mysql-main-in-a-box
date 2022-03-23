@@ -1,21 +1,31 @@
-#!/usr/bin/python3
-# -*- coding: utf-8 -*-
+#!/usr/local/lib/mailinabox/env/bin/python3
+#
+# The API can be accessed on the command line, e.g. use `curl` like so:
+#    curl --user $(</var/lib/mailinabox/api.key): http://localhost:10222/mail/users
+#
+# During development, you can start the Mail-in-a-Box control panel
+# by running this script, e.g.:
+#
+# service mailinabox stop # stop the system process
+# DEBUG=1 management/daemon.py
+# service mailinabox start # when done debugging, start it up again
 
 import os, os.path, re, json, time
-import subprocess
+import multiprocessing.pool, subprocess
 
 from functools import wraps
 
 from flask import Flask, request, render_template, abort, Response, send_from_directory, make_response
 
-import auth, utils, multiprocessing.pool
-from mailconfig import get_mail_users, get_mail_users_ex, get_admins, add_mail_user, set_mail_password, set_mail_name, remove_mail_user
+import auth, utils
+from mailconfig import get_mail_users, get_mail_users_ex, get_admins, add_mail_user, set_mail_password, remove_mail_user
 from mailconfig import get_mail_user_privileges, add_remove_mail_user_privilege
 from mailconfig import get_mail_aliases, get_mail_aliases_ex, get_mail_domains, add_mail_alias, remove_mail_alias
+from mfa import get_public_mfa_state, provision_totp, validate_totp_secret, enable_mfa, disable_mfa
 
 env = utils.load_environment()
 
-auth_service = auth.KeyAuthService()
+auth_service = auth.AuthService()
 
 # We may deploy via a symbolic link, which confuses flask's template finding.
 me = __file__
@@ -37,61 +47,69 @@ app = Flask(__name__, template_folder=os.path.abspath(os.path.join(os.path.dirna
 
 # Decorator to protect views that require a user with 'admin' privileges.
 def authorized_personnel_only(viewfunc):
-    @wraps(viewfunc)
-    def newview(*args, **kwargs):
-        # Authenticate the passed credentials, which is either the API key or a username:password pair.
-        error = None
-        try:
-            email, privs = auth_service.authenticate(request, env)
-        except ValueError as e:
-            # Authentication failed.
-            privs = []
-            error = "Incorrect username or password"
+	@wraps(viewfunc)
+	def newview(*args, **kwargs):
+		# Authenticate the passed credentials, which is either the API key or a username:password pair
+		# and an optional X-Auth-Token token.
+		error = None
+		privs = []
 
-            # Write a line in the log recording the failed login
-            log_failed_login(request)
+		try:
+			email, privs = auth_service.authenticate(request, env)
+		except ValueError as e:
+			# Write a line in the log recording the failed login, unless no authorization header
+			# was given which can happen on an initial request before a 403 response.
+			if "Authorization" in request.headers:
+				log_failed_login(request)
 
-        # Authorized to access an API view?
-        if "admin" in privs:
-            # Call view func.
-            return viewfunc(*args, **kwargs)
-        elif not error:
-            error = "You are not an administrator."
+			# Authentication failed.
+			error = str(e)
 
-        # Not authorized. Return a 401 (send auth) and a prompt to authorize by default.
-        status = 401
-        headers = {
-            'WWW-Authenticate': 'Basic realm="{0}"'.format(auth_service.auth_realm),
-            'X-Reason': error,
-        }
+		# Authorized to access an API view?
+		if "admin" in privs:
+			# Store the email address of the logged in user so it can be accessed
+			# from the API methods that affect the calling user.
+			request.user_email = email
+			request.user_privs = privs
 
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            # Don't issue a 401 to an AJAX request because the user will
-            # be prompted for credentials, which is not helpful.
-            status = 403
-            headers = None
+			# Call view func.
+			return viewfunc(*args, **kwargs)
 
-        if request.headers.get('Accept') in (None, "", "*/*"):
-            # Return plain text output.
-            return Response(error + "\n", status=status, mimetype='text/plain', headers=headers)
-        else:
-            # Return JSON output.
-            return Response(json.dumps({
-                "status": "error",
-                "reason": error,
-            }) + "\n", status=status, mimetype='application/json', headers=headers)
+		if not error:
+			error = "You are not an administrator."
 
-    return newview
+		# Not authorized. Return a 401 (send auth) and a prompt to authorize by default.
+		status = 401
+		headers = {
+			'WWW-Authenticate': 'Basic realm="{0}"'.format(auth_service.auth_realm),
+			'X-Reason': error,
+		}
 
+		if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+			# Don't issue a 401 to an AJAX request because the user will
+			# be prompted for credentials, which is not helpful.
+			status = 403
+			headers = None
+
+		if request.headers.get('Accept') in (None, "", "*/*"):
+			# Return plain text output.
+			return Response(error+"\n", status=status, mimetype='text/plain', headers=headers)
+		else:
+			# Return JSON output.
+			return Response(json.dumps({
+				"status": "error",
+				"reason": error,
+				})+"\n", status=status, mimetype='application/json', headers=headers)
+
+	return newview
 
 @app.errorhandler(401)
 def unauthorized(error):
     return auth_service.make_unauthorized_response()
 
 
-def json_response(data):
-    return Response(json.dumps(data, indent=2, sort_keys=True) + '\n', status=200, mimetype='application/json')
-
+def json_response(data, status=200):
+	return Response(json.dumps(data, indent=2, sort_keys=True)+'\n', status=status, mimetype='application/json')
 
 ###################################
 
@@ -121,44 +139,58 @@ def index():
                            )
 
 
-@app.route('/me')
-def me():
-    # Is the caller authorized?
-    try:
-        email, privs = auth_service.authenticate(request, env)
-    except ValueError as e:
-        # Log the failed login
-        log_failed_login(request)
+# Create a session key by checking the username/password in the Authorization header.
+@app.route('/login', methods=["POST"])
+def login():
+	# Is the caller authorized?
+	try:
+		email, privs = auth_service.authenticate(request, env, login_only=True)
+	except ValueError as e:
+		if "missing-totp-token" in str(e):
+			return json_response({
+				"status": "missing-totp-token",
+				"reason": str(e),
+			})
+		else:
+			# Log the failed login
+			log_failed_login(request)
+			return json_response({
+				"status": "invalid",
+				"reason": str(e),
+			})
 
-        return json_response({
-            "status": "invalid",
-            "reason": "Incorrect username or password",
-        })
+	# Return a new session for the user.
+	resp = {
+		"status": "ok",
+		"email": email,
+		"privileges": privs,
+		"api_key": auth_service.create_session_key(email, env, type='login'),
+	}
 
-    resp = {
-        "status": "ok",
-        "email": email,
-        "privileges": privs,
-    }
+	app.logger.info("New login session created for {}".format(email))
 
-    # Is authorized as admin? Return an API key for future use.
-    if "admin" in privs:
-        resp["api_key"] = auth_service.create_user_key(email, env)
+	# Return.
+	return json_response(resp)
 
-    # Return.
-    return json_response(resp)
-
+@app.route('/logout', methods=["POST"])
+def logout():
+	try:
+		email, _ = auth_service.authenticate(request, env, logout=True)
+		app.logger.info("{} logged out".format(email))
+	except ValueError as e:
+		pass
+	finally:
+		return json_response({ "status": "ok" })
 
 # MAIL
 
 @app.route('/mail/users')
 @authorized_personnel_only
 def mail_users():
-    if request.args.get("format", "") == "json":
-        return json_response(get_mail_users_ex(env, with_archived=True, with_slow_info=True))
-    else:
-        return "".join(x + "\n" for x in get_mail_users(env))
-
+	if request.args.get("format", "") == "json":
+		return json_response(get_mail_users_ex(env, with_archived=True))
+	else:
+		return "".join(x+"\n" for x in get_mail_users(env))
 
 @app.route('/mail/users/add', methods=['POST'])
 @authorized_personnel_only
@@ -217,12 +249,10 @@ def mail_user_privs_remove():
 @app.route('/mail/aliases')
 @authorized_personnel_only
 def mail_aliases():
-    if request.args.get("format", "") == "json":
-        return json_response(get_mail_aliases_ex(env))
-    else:
-        return "".join(address + "\t" + receivers + "\t" + (senders or "") + "\n" for address, receivers, senders in
-                       get_mail_aliases(env))
-
+	if request.args.get("format", "") == "json":
+		return json_response(get_mail_aliases_ex(env))
+	else:
+		return "".join(address+"\t"+receivers+"\t"+(senders or "")+"\n" for address, receivers, senders, auto in get_mail_aliases(env))
 
 @app.route('/mail/aliases/add', methods=['POST'])
 @authorized_personnel_only
@@ -288,18 +318,50 @@ def dns_set_secondary_nameserver():
 @app.route('/dns/custom')
 @authorized_personnel_only
 def dns_get_records(qname=None, rtype=None):
-    from dns_update import get_custom_dns_config
-    return json_response([
-                             {
-                                 "qname": r[0],
-                                 "rtype": r[1],
-                                 "value": r[2],
-                             }
-                             for r in get_custom_dns_config(env)
-                             if r[0] != "_secondary_nameserver"
-                             and (not qname or r[0] == qname)
-                             and (not rtype or r[1] == rtype)])
+	# Get the current set of custom DNS records.
+	from dns_update import get_custom_dns_config, get_dns_zones
+	records = get_custom_dns_config(env, only_real_records=True)
 
+	# Filter per the arguments for the more complex GET routes below.
+	records = [r for r in records
+		if (not qname or r[0] == qname)
+		and (not rtype or r[1] == rtype) ]
+
+	# Make a better data structure.
+	records = [
+        {
+                "qname": r[0],
+                "rtype": r[1],
+                "value": r[2],
+		"sort-order": { },
+        } for r in records ]
+
+	# To help with grouping by zone in qname sorting, label each record with which zone it is in.
+	# There's an inconsistency in how we handle zones in get_dns_zones and in sort_domains, so
+	# do this first before sorting the domains within the zones.
+	zones = utils.sort_domains([z[0] for z in get_dns_zones(env)], env)
+	for r in records:
+		for z in zones:
+			if r["qname"] == z or r["qname"].endswith("." + z):
+				r["zone"] = z
+				break
+
+	# Add sorting information. The 'created' order follows the order in the YAML file on disk,
+	# which tracs the order entries were added in the control panel since we append to the end.
+	# The 'qname' sort order sorts by our standard domain name sort (by zone then by qname),
+	# then by rtype, and last by the original order in the YAML file (since sorting by value
+	# may not make sense, unless we parse IP addresses, for example).
+	for i, r in enumerate(records):
+		r["sort-order"]["created"] = i
+	domain_sort_order = utils.sort_domains([r["qname"] for r in records], env)
+	for i, r in enumerate(sorted(records, key = lambda r : (
+			zones.index(r["zone"]) if r.get("zone") else 0, # record is not within a zone managed by the box
+			domain_sort_order.index(r["qname"]),
+			r["rtype"]))):
+		r["sort-order"]["qname"] = i
+
+	# Return.
+	return json_response(records)
 
 @app.route('/dns/custom/<qname>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @app.route('/dns/custom/<qname>/<rtype>', methods=['GET', 'POST', 'PUT', 'DELETE'])
@@ -362,37 +424,44 @@ def dns_get_dump():
     return json_response(build_recommended_dns(env))
 
 
+@app.route('/dns/zonefile/<zone>')
+@authorized_personnel_only
+def dns_get_zonefile(zone):
+	from dns_update import get_dns_zonefile
+	return Response(get_dns_zonefile(zone, env), status=200, mimetype='text/plain')
+
 # SSL
 
 @app.route('/ssl/status')
 @authorized_personnel_only
 def ssl_get_status():
-    from ssl_certificates import get_certificates_to_provision
-    from web_update import get_web_domains_info, get_web_domains
+	from ssl_certificates import get_certificates_to_provision
+	from web_update import get_web_domains_info, get_web_domains
 
-    # What domains can we provision certificates for? What unexpected problems do we have?
-    provision, cant_provision = get_certificates_to_provision(env, show_extended_problems=False)
+	# What domains can we provision certificates for? What unexpected problems do we have?
+	provision, cant_provision = get_certificates_to_provision(env, show_valid_certs=False)
 
-    # What's the current status of TLS certificates on all of the domain?
-    domains_status = get_web_domains_info(env)
-    domains_status = [{"domain": d["domain"], "status": d["ssl_certificate"][0], "text": d["ssl_certificate"][1]} for d
-                      in domains_status]
+	# What's the current status of TLS certificates on all of the domain?
+	domains_status = get_web_domains_info(env)
+	domains_status = [
+		{
+			"domain": d["domain"],
+			"status": d["ssl_certificate"][0],
+			"text": d["ssl_certificate"][1] + ((" " + cant_provision[d["domain"]] if d["domain"] in cant_provision else ""))
+		} for d in domains_status ]
 
-    # Warn the user about domain names not hosted here because of other settings.
-    for domain in set(get_web_domains(env, exclude_dns_elsewhere=False)) - set(get_web_domains(env)):
-        domains_status.append({
-            "domain": domain,
-            "status": "not-applicable",
-            "text": "The domain's website is hosted elsewhere.",
-        })
+	# Warn the user about domain names not hosted here because of other settings.
+	for domain in set(get_web_domains(env, exclude_dns_elsewhere=False)) - set(get_web_domains(env)):
+		domains_status.append({
+			"domain": domain,
+			"status": "not-applicable",
+			"text": "The domain's website is hosted elsewhere.",
+		})
 
-    return json_response({
-        "can_provision": utils.sort_domains(provision, env),
-        "cant_provision": [{"domain": domain, "problem": cant_provision[domain]} for domain in
-                           utils.sort_domains(cant_provision, env)],
-        "status": domains_status,
-    })
-
+	return json_response({
+		"can_provision": utils.sort_domains(provision, env),
+		"status": domains_status,
+	})
 
 @app.route('/ssl/csr/<domain>', methods=['POST'])
 @authorized_personnel_only
@@ -418,13 +487,64 @@ def ssl_install_cert():
 @app.route('/ssl/provision', methods=['POST'])
 @authorized_personnel_only
 def ssl_provision_certs():
-    from ssl_certificates import provision_certificates
-    agree_to_tos_url = request.form.get('agree_to_tos_url')
-    status = provision_certificates(env,
-                                    agree_to_tos_url=agree_to_tos_url,
-                                    jsonable=True)
-    return json_response(status)
+	from ssl_certificates import provision_certificates
+	requests = provision_certificates(env, limit_domains=None)
+	return json_response({ "requests": requests })
 
+# multi-factor auth
+
+@app.route('/mfa/status', methods=['POST'])
+@authorized_personnel_only
+def mfa_get_status():
+	# Anyone accessing this route is an admin, and we permit them to
+	# see the MFA status for any user if they submit a 'user' form
+	# field. But we don't include provisioning info since a user can
+	# only provision for themselves.
+	email = request.form.get('user', request.user_email) # user field if given, otherwise the user making the request
+	try:
+		resp = {
+			"enabled_mfa": get_public_mfa_state(email, env)
+		}
+		if email == request.user_email:
+			resp.update({
+				"new_mfa": {
+					"totp": provision_totp(email, env)
+				}
+			})
+	except ValueError as e:
+		return (str(e), 400)
+	return json_response(resp)
+
+@app.route('/mfa/totp/enable', methods=['POST'])
+@authorized_personnel_only
+def totp_post_enable():
+	secret = request.form.get('secret')
+	token = request.form.get('token')
+	label = request.form.get('label')
+	if type(token) != str:
+		return ("Bad Input", 400)
+	try:
+		validate_totp_secret(secret)
+		enable_mfa(request.user_email, "totp", secret, token, label, env)
+	except ValueError as e:
+		return (str(e), 400)
+	return "OK"
+
+@app.route('/mfa/disable', methods=['POST'])
+@authorized_personnel_only
+def totp_post_disable():
+	# Anyone accessing this route is an admin, and we permit them to
+	# disable the MFA status for any user if they submit a 'user' form
+	# field.
+	email = request.form.get('user', request.user_email) # user field if given, otherwise the user making the request
+	try:
+		result = disable_mfa(email, request.form.get('mfa-id') or None, env) # convert empty string to None
+	except ValueError as e:
+		return (str(e), 400)
+	if result: # success
+		return "OK"
+	else: # error
+		return ("Invalid user or MFA id.", 400)
 
 # WEB
 
@@ -467,33 +587,25 @@ def system_latest_upstream_version():
 @app.route('/system/status', methods=["POST"])
 @authorized_personnel_only
 def system_status():
-    from status_checks import run_checks
-    class WebOutput:
-        def __init__(self):
-            self.items = []
-
-        def add_heading(self, heading):
-            self.items.append({"type": "heading", "text": heading, "extra": []})
-
-        def print_ok(self, message):
-            self.items.append({"type": "ok", "text": message, "extra": []})
-
-        def print_error(self, message):
-            self.items.append({"type": "error", "text": message, "extra": []})
-
-        def print_warning(self, message):
-            self.items.append({"type": "warning", "text": message, "extra": []})
-
-        def print_line(self, message, monospace=False):
-            self.items[-1]["extra"].append({"text": message, "monospace": monospace})
-
-    output = WebOutput()
-    # Create a temporary pool of processes for the status checks
-    pool = multiprocessing.pool.Pool(processes=5)
-    run_checks(False, env, output, pool)
-    pool.terminate()
-    return json_response(output.items)
-
+	from status_checks import run_checks
+	class WebOutput:
+		def __init__(self):
+			self.items = []
+		def add_heading(self, heading):
+			self.items.append({ "type": "heading", "text": heading, "extra": [] })
+		def print_ok(self, message):
+			self.items.append({ "type": "ok", "text": message, "extra": [] })
+		def print_error(self, message):
+			self.items.append({ "type": "error", "text": message, "extra": [] })
+		def print_warning(self, message):
+			self.items.append({ "type": "warning", "text": message, "extra": [] })
+		def print_line(self, message, monospace=False):
+			self.items[-1]["extra"].append({ "text": message, "monospace": monospace })
+	output = WebOutput()
+	# Create a temporary pool of processes for the status checks
+	with multiprocessing.pool.Pool(processes=5) as pool:
+		run_checks(False, env, output, pool)
+	return json_response(output.items)
 
 @app.route('/system/updates')
 @authorized_personnel_only
@@ -583,69 +695,94 @@ def privacy_status_set():
 # MUNIN
 
 @app.route('/munin/')
-@app.route('/munin/<path:filename>')
 @authorized_personnel_only
-def munin(filename=""):
-    # Checks administrative access (@authorized_personnel_only) and then just proxies
-    # the request to static files.
-    if filename == "": filename = "index.html"
-    return send_from_directory("/var/cache/munin/www", filename)
+def munin_start():
+	# Munin pages, static images, and dynamically generated images are served
+	# outside of the AJAX API. We'll start with a 'start' API that sets a cookie
+	# that subsequent requests will read for authorization. (We don't use cookies
+	# for the API to avoid CSRF vulnerabilities.)
+	response = make_response("OK")
+	response.set_cookie("session", auth_service.create_session_key(request.user_email, env, type='cookie'),
+	    max_age=60*30, secure=True, httponly=True, samesite="Strict") # 30 minute duration
+	return response
 
+def check_request_cookie_for_admin_access():
+	session = auth_service.get_session(None, request.cookies.get("session", ""), "cookie", env)
+	if not session: return False
+	privs = get_mail_user_privileges(session["email"], env)
+	if not isinstance(privs, list): return False
+	if "admin" not in privs: return False
+	return True
+
+def authorized_personnel_only_via_cookie(f):
+	@wraps(f)
+	def g(*args, **kwargs):
+		if not check_request_cookie_for_admin_access():
+			return Response("Unauthorized", status=403, mimetype='text/plain', headers={})
+		return f(*args, **kwargs)
+	return g
+
+@app.route('/munin/<path:filename>')
+@authorized_personnel_only_via_cookie
+def munin_static_file(filename=""):
+	# Proxy the request to static files.
+	if filename == "": filename = "index.html"
+	return send_from_directory("/var/cache/munin/www", filename)
 
 @app.route('/munin/cgi-graph/<path:filename>')
-@authorized_personnel_only
+@authorized_personnel_only_via_cookie
 def munin_cgi(filename):
-    """ Relay munin cgi dynazoom requests
-    /usr/lib/munin/cgi/munin-cgi-graph is a perl cgi script in the munin package
-    that is responsible for generating binary png images _and_ associated HTTP
-    headers based on parameters in the requesting URL. All output is written
-    to stdout which munin_cgi splits into response headers and binary response
-    data.
-    munin-cgi-graph reads environment variables to determine
-    what it should do. It expects a path to be in the env-var PATH_INFO, and a
-    querystring to be in the env-var QUERY_STRING.
-    munin-cgi-graph has several failure modes. Some write HTTP Status headers and
-    others return nonzero exit codes.
-    Situating munin_cgi between the user-agent and munin-cgi-graph enables keeping
-    the cgi script behind mailinabox's auth mechanisms and avoids additional
-    support infrastructure like spawn-fcgi.
-    """
+	""" Relay munin cgi dynazoom requests
+	/usr/lib/munin/cgi/munin-cgi-graph is a perl cgi script in the munin package
+	that is responsible for generating binary png images _and_ associated HTTP
+	headers based on parameters in the requesting URL. All output is written
+	to stdout which munin_cgi splits into response headers and binary response
+	data.
+	munin-cgi-graph reads environment variables to determine
+	what it should do. It expects a path to be in the env-var PATH_INFO, and a
+	querystring to be in the env-var QUERY_STRING.
+	munin-cgi-graph has several failure modes. Some write HTTP Status headers and
+	others return nonzero exit codes.
+	Situating munin_cgi between the user-agent and munin-cgi-graph enables keeping
+	the cgi script behind mailinabox's auth mechanisms and avoids additional
+	support infrastructure like spawn-fcgi.
+	"""
 
-    COMMAND = 'su - munin --preserve-environment --shell=/bin/bash -c /usr/lib/munin/cgi/munin-cgi-graph'
-    # su changes user, we use the munin user here
-    # --preserve-environment retains the environment, which is where Popen's `env` data is
-    # --shell=/bin/bash ensures the shell used is bash
-    # -c "/usr/lib/munin/cgi/munin-cgi-graph" passes the command to run as munin
-    # "%s" is a placeholder for where the request's querystring will be added
+	COMMAND = 'su - munin --preserve-environment --shell=/bin/bash -c /usr/lib/munin/cgi/munin-cgi-graph'
+	# su changes user, we use the munin user here
+	# --preserve-environment retains the environment, which is where Popen's `env` data is
+	# --shell=/bin/bash ensures the shell used is bash
+	# -c "/usr/lib/munin/cgi/munin-cgi-graph" passes the command to run as munin
+	# "%s" is a placeholder for where the request's querystring will be added
 
-    if filename == "":
-        return ("a path must be specified", 404)
+	if filename == "":
+		return ("a path must be specified", 404)
 
-    query_str = request.query_string.decode("utf-8", 'ignore')
+	query_str = request.query_string.decode("utf-8", 'ignore')
 
-    env = {'PATH_INFO': '/%s/' % filename, 'REQUEST_METHOD': 'GET', 'QUERY_STRING': query_str}
-    code, binout = utils.shell('check_output',
-                               COMMAND.split(" ", 5),
-                               # Using a maxsplit of 5 keeps the last arguments together
-                               env=env,
-                               return_bytes=True,
-                               trap=True)
+	env = {'PATH_INFO': '/%s/' % filename, 'REQUEST_METHOD': 'GET', 'QUERY_STRING': query_str}
+	code, binout = utils.shell('check_output',
+							   COMMAND.split(" ", 5),
+							   # Using a maxsplit of 5 keeps the last arguments together
+							   env=env,
+							   return_bytes=True,
+							   trap=True)
 
-    if code != 0:
-        # nonzero returncode indicates error
-        app.logger.error("munin_cgi: munin-cgi-graph returned nonzero exit code, %s", process.returncode)
-        return ("error processing graph image", 500)
+	if code != 0:
+		# nonzero returncode indicates error
+		app.logger.error("munin_cgi: munin-cgi-graph returned nonzero exit code, %s", code)
+		return ("error processing graph image", 500)
 
-    # /usr/lib/munin/cgi/munin-cgi-graph returns both headers and binary png when successful.
-    # A double-Windows-style-newline always indicates the end of HTTP headers.
-    headers, image_bytes = binout.split(b'\r\n\r\n', 1)
-    response = make_response(image_bytes)
-    for line in headers.splitlines():
-        name, value = line.decode("utf8").split(':', 1)
-        response.headers[name] = value
-    if 'Status' in response.headers and '404' in response.headers['Status']:
-        app.logger.warning("munin_cgi: munin-cgi-graph returned 404 status code. PATH_INFO=%s", env['PATH_INFO'])
-    return response
+	# /usr/lib/munin/cgi/munin-cgi-graph returns both headers and binary png when successful.
+	# A double-Windows-style-newline always indicates the end of HTTP headers.
+	headers, image_bytes = binout.split(b'\r\n\r\n', 1)
+	response = make_response(image_bytes)
+	for line in headers.splitlines():
+		name, value = line.decode("utf8").split(':', 1)
+		response.headers[name] = value
+	if 'Status' in response.headers and '404' in response.headers['Status']:
+		app.logger.warning("munin_cgi: munin-cgi-graph returned 404 status code. PATH_INFO=%s", env['PATH_INFO'])
+	return response
 
 
 def log_failed_login(request):
@@ -668,19 +805,14 @@ def log_failed_login(request):
 # APP
 
 if __name__ == '__main__':
-    if "DEBUG" in os.environ: app.debug = True
-    if "APIKEY" in os.environ: auth_service.key = os.environ["APIKEY"]
+	if "DEBUG" in os.environ:
+		# Turn on Flask debugging.
+		app.debug = True
 
     if not app.debug:
         app.logger.addHandler(utils.create_syslog_handler())
 
-    # For testing on the command line, you can use `curl` like so:
-    #    curl --user $(</var/lib/mailinabox/api.key): http://localhost:10222/mail/users
-    auth_service.write_key()
-
-    # For testing in the browser, you can copy the API key that's output to the
-    # debug console and enter that as the username
-    app.logger.info('API key: ' + auth_service.key)
+	#app.logger.info('API key: ' + auth_service.key)
 
     # Start the application server. Listens on 127.0.0.1 (IPv4 only).
     app.run(port=10222)

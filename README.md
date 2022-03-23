@@ -17,18 +17,19 @@ Our goals are to:
 
 * Make deploying a good mail server easy.
 * Promote [decentralization](http://redecentralize.org/), innovation, and privacy on the web.
-* Have automated, auditable, and [idempotent](https://sharknet.us/2014/02/01/automated-configuration-management-challenges-with-idempotency/) configuration.
+* Have automated, auditable, and [idempotent](https://web.archive.org/web/20190518072631/https://sharknet.us/2014/02/01/automated-configuration-management-challenges-with-idempotency/) configuration.
 * **Not** make a totally unhackable, NSA-proof server.
 * **Not** make something customizable by power users.
 
 Additionally, this project has a [Code of Conduct](CODE_OF_CONDUCT.md), which supersedes the goals above. Please review it when joining our community.
 
-The Box
--------
 
-Mail-in-a-Box turns a fresh Ubuntu 16.04 LTS 64-bit machine into a working mail server by installing and configuring various components.
+In The Box
+----------
 
-It is a one-click email appliance. There are no user-configurable setup options. It "just works".
+Mail-in-a-Box turns a fresh Ubuntu 18.04 LTS 64-bit machine into a working mail server by installing and configuring various components.
+
+It is a one-click email appliance. There are no user-configurable setup options. It "just works."
 
 The components installed are:
 
@@ -47,19 +48,22 @@ It also includes:
 
 For more information on how Mail-in-a-Box handles your privacy, see the [security details page](security.md).
 
+
 Installation
 ------------
 
 Start with a completely fresh (really, I mean it) Ubuntu 16.04 LTS 64-bit machine. On the machine...
 
-Clone this repository:
+Clone this repository and checkout the tag corresponding to the most recent release:
 
 	$ git clone https://github.com/jkaberg/mailinabox-sogo
 	$ cd mailinabox
+	$ git checkout v56
 
 Begin the installation.
 
-	$ sudo setup/start.sh
+Contributing and Development
+----------------------------
 
 The Acknowledgements
 --------------------

@@ -1,9 +1,14 @@
 Mail-in-a-Box Security Guide
 ============================
 
-Mail-in-a-Box turns a fresh Ubuntu 14.04 LTS 64-bit machine into a mail server appliance by installing and configuring various components.
+Mail-in-a-Box turns a fresh Ubuntu 18.04 LTS 64-bit machine into a mail server appliance by installing and configuring various components.
 
-This page documents the security features of Mail-in-a-Box. The term “box” is used below to mean a configured Mail-in-a-Box.
+This page documents the security posture of Mail-in-a-Box. The term “box” is used below to mean a configured Mail-in-a-Box.
+
+Reporting Security Vulnerabilities
+----------------------------------
+
+Security vulnerabilities should be reported to the [project's maintainer](https://joshdata.me) via email.
 
 Threat Model
 ------------
@@ -32,34 +37,24 @@ The box's administrator and its (non-administrative) mail users must sometimes c
 
 These services are protected by [TLS](https://en.wikipedia.org/wiki/Transport_Layer_Security):
 
-* SMTP Submission (port 587). Mail users submit outbound mail through SMTP with STARTTLS on port 587.
+* SMTP Submission (ports 465/587). Mail users submit outbound mail through SMTP with TLS (port 465) or STARTTLS (port 587).
 * IMAP/POP (ports 993, 995). Mail users check for incoming mail through IMAP or POP over TLS.
 * HTTPS (port 443). Webmail, the Exchange/ActiveSync protocol, the administrative control panel, and any static hosted websites are accessed over HTTPS.
 
 The services all follow these rules:
 
 * TLS certificates are generated with 2048-bit RSA keys and SHA-256 fingerprints. The box provides a self-signed certificate by default. The [setup guide](https://mailinabox.email/guide.html) explains how to verify the certificate fingerprint on first login. Users are encouraged to replace the certificate with a proper CA-signed one. ([source](setup/ssl.sh))
-* Only TLSv1, TLSv1.1 and TLSv1.2 are offered (the older SSL protocols are not offered).
-* Export-grade ciphers, the anonymous DH/ECDH algorithms (aNULL), and clear-text ciphers (eNULL) are not offered.
-* The minimum cipher key length offered is 112 bits. The maximum is 256 bits. Diffie-Hellman ciphers use a 2048-bit key for forward secrecy.
+* Only TLSv1.2+ are offered (the older SSL protocols are not offered).
+* We track the [Mozilla Intermediate Ciphers Recommendation](https://wiki.mozilla.org/Security/Server_Side_TLS), balancing security with supporting a wide range of mail clients. Diffie-Hellman ciphers use a 2048-bit key for forward secrecy. For more details, see the [output of SSLyze for these ports](tests/tls_results.txt).
 
 Additionally:
 
-* SMTP Submission (port 587) will not accept user credentials without STARTTLS (true also of SMTP on port 25 in case of client misconfiguration), and the submission port won't accept mail without encryption. The minimum cipher key length is 128 bits. (The box is of course configured not to be an open relay. User credentials are required to send outbound mail.) ([source](setup/mail-postfix.sh))
+* SMTP Submission on port 587 will not accept user credentials without STARTTLS (true also of SMTP on port 25 in case of client misconfiguration), and the submission port won't accept mail without encryption. The minimum cipher key length is 128 bits. (The box is of course configured not to be an open relay. User credentials are required to send outbound mail.) ([source](setup/mail-postfix.sh))
 * HTTPS (port 443): The HTTPS Strict Transport Security header is set. A redirect from HTTP to HTTPS is offered. The [Qualys SSL Labs test](https://www.ssllabs.com/ssltest) should report an A+ grade. ([source 1](conf/nginx-ssl.conf), [source 2](conf/nginx.conf))
-
-For more details, see the [output of SSLyze for these ports](tests/tls_results.txt).
-
-The cipher and protocol selection are chosen to support the following clients:
-
-* For HTTPS: Firefox 1, Chrome 1, IE 7, Opera 5, Safari 1, Windows XP IE8, Android 2.3, Java 7.
-* For other protocols: TBD.
 
 ### Password Storage
 
-The passwords for mail users are stored on disk using the [SHA512-CRYPT](http://man7.org/linux/man-pages/man3/crypt.3.html) hashing scheme. ([source](management/mailconfig.py))
-
-When using the web-based administrative control panel, after logging in an API key is placed in the browser's local storage (rather than, say, the user's actual password). The API key is an HMAC based on the user's email address and current password, and it is keyed by a secret known only to the control panel service. By resetting an administrator's password, any HMACs previously generated for that user will expire.
+The passwords for mail users are stored on disk using the [SHA512-CRYPT](http://man7.org/linux/man-pages/man3/crypt.3.html) hashing scheme. ([source](management/mailconfig.py)) Password changes (as well as changes to control panel two-factor authentication settings) expire any control panel login sessions.
 
 ### Console access
 
@@ -73,11 +68,9 @@ If DNSSEC is enabled at the box's domain name's registrar, the SSHFP record that
 
 `fail2ban` provides some protection from brute-force login attacks (repeated logins that guess account passwords) by blocking offending IP addresses at the network level.
 
-The following services are protected: SSH, IMAP (dovecot), SMTP submission (postfix), webmail (roundcube), ownCloud/CalDAV/CardDAV (over HTTP), and the Mail-in-a-Box control panel & munin (over HTTP).
+The following services are protected: SSH, IMAP (dovecot), SMTP submission (postfix), webmail (roundcube), Nextcloud/CalDAV/CardDAV (over HTTP), and the Mail-in-a-Box control panel (over HTTP).
 
 Some other services running on the box may be missing fail2ban filters.
-
-`fail2ban` only blocks IPv4 addresses, however. If the box has a public IPv6 address, it is not protected from these attacks.
 
 Outbound Mail
 -------------
@@ -102,16 +95,20 @@ Domain policy records allow recipient MTAs to detect when the _domain_ part of o
 
 ### User Policy
 
-While domain policy records prevent other servers from sending mail with a "From:" header that matches a domain hosted on the box (see above), those policy records do not guarnatee that the user portion of the sender email address matches the actual sender. In enterprise environments where the box may host the mail of untrusted users, it is important to guard against users impersonating other users.
+While domain policy records prevent other servers from sending mail with a "From:" header that matches a domain hosted on the box (see above), those policy records do not guarantee that the user portion of the sender email address matches the actual sender. In enterprise environments where the box may host the mail of untrusted users, it is important to guard against users impersonating other users.
 
 The box restricts the envelope sender address (also called the return path or MAIL FROM address --- this is different from the "From:" header) that users may put into outbound mail. The envelope sender address must be either their own email address (their SMTP login username) or any alias that they are listed as a permitted sender of. (There is currently no restriction on the contents of the "From:" header.)
 
 Incoming Mail
 -------------
 
-### Encryption
+### Encryption Settings
 
-As discussed above, there is no way to require on-the-wire encryption of mail. When the box receives an incoming email (SMTP on port 25), it offers encryption (STARTTLS) but cannot require that senders use it because some senders may not support STARTTLS at all and other senders may support STARTTLS but not with the latest protocols/ciphers. To give senders the best chance at making use of encryption, the box offers protocols back to TLSv1 and ciphers with key lengths as low as 112 bits. Modern clients (senders) will make use of the 256-bit ciphers and Diffie-Hellman ciphers with a 2048-bit key for perfect forward secrecy, however. ([source](setup/mail-postfix.sh))
+As with outbound email, there is no way to require on-the-wire encryption of incoming mail from all senders. When the box receives an incoming email (SMTP on port 25), it offers encryption (STARTTLS) but cannot require that senders use it because some senders may not support STARTTLS at all and other senders may support STARTTLS but not with the latest protocols/ciphers. To give senders the best chance at making use of encryption, the box offers protocols back to TLSv1 and ciphers with key lengths as low as 112 bits. Modern clients (senders) will make use of the 256-bit ciphers and Diffie-Hellman ciphers with a 2048-bit key for perfect forward secrecy, however. ([source](setup/mail-postfix.sh))
+
+### MTA-STS
+
+The box publishes a SMTP MTA Strict Transport Security ([SMTP MTA-STS](https://en.wikipedia.org/wiki/Simple_Mail_Transfer_Protocol#SMTP_MTA_Strict_Transport_Security)) policy (via DNS and HTTPS) in "enforce" mode. Senders that support MTA-STS will use a secure SMTP connection. (MTA-STS tells senders to connect and expect a signed TLS certificate for the "MX" domain without permitting a fallback to an unencrypted connection.)
 
 ### DANE
 

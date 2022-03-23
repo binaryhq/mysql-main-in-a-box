@@ -137,6 +137,62 @@ def migration_10(env):
 				shutil.move(sslcert, newname)
 				os.rmdir(d)
 
+def migration_11(env):
+	# Archive the old Let's Encrypt account directory managed by free_tls_certificates
+	# because we'll use that path now for the directory managed by certbot.
+	try:
+		old_path = os.path.join(env["STORAGE_ROOT"], 'ssl', 'lets_encrypt')
+		new_path = os.path.join(env["STORAGE_ROOT"], 'ssl', 'lets_encrypt-old')
+		shutil.move(old_path, new_path)
+	except:
+		# meh
+		pass
+
+def migration_12(env):
+	# Upgrading to Carddav Roundcube plugin to version 3+, it requires the carddav_*
+        # tables to be dropped.
+        # Checking that the roundcube database already exists.
+        if os.path.exists(os.path.join(env["STORAGE_ROOT"], "mail/roundcube/roundcube.sqlite")):
+            import sqlite3
+            conn = sqlite3.connect(os.path.join(env["STORAGE_ROOT"], "mail/roundcube/roundcube.sqlite"))
+            c = conn.cursor()
+            # Get a list of all the tables that begin with 'carddav_'
+            c.execute("SELECT name FROM sqlite_master WHERE type = ? AND name LIKE ?", ('table', 'carddav_%'))
+            carddav_tables = c.fetchall()
+            # If there were tables that begin with 'carddav_', drop them
+            if carddav_tables:
+                for table in carddav_tables:
+                    try:
+                        table = table[0]
+                        c = conn.cursor()
+                        dropcmd = "DROP TABLE %s" % table
+                        c.execute(dropcmd)
+                    except:
+                        print("Failed to drop table", table, e)
+            # Save.
+            conn.commit()
+            conn.close()
+
+            # Delete all sessions, requring users to login again to recreate carddav_*
+            # databases
+            conn = sqlite3.connect(os.path.join(env["STORAGE_ROOT"], "mail/roundcube/roundcube.sqlite"))
+            c = conn.cursor()
+            c.execute("delete from session;")
+            conn.commit()
+            conn.close()
+
+def migration_13(env):
+	# Add the "mfa" table for configuring MFA for login to the control panel.
+	db = os.path.join(env["STORAGE_ROOT"], 'mail/users.sqlite')
+	shell("check_call", ["sqlite3", db, "CREATE TABLE mfa (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, secret TEXT NOT NULL, mru_token TEXT, label TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);"])
+
+def migration_14(env):
+	# Add the "auto_aliases" table.
+	db = os.path.join(env["STORAGE_ROOT"], 'mail/users.sqlite')
+	shell("check_call", ["sqlite3", db, "CREATE TABLE auto_aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL UNIQUE, destination TEXT NOT NULL, permitted_senders TEXT);"])
+
+###########################################################
+
 def get_current_migration():
 	ver = 0
 	while True:

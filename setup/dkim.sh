@@ -22,11 +22,17 @@ mkdir -p $STORAGE_ROOT/mail/dkim
 echo "127.0.0.1" > /etc/opendkim/TrustedHosts
 touch /etc/opendkim/{KeyTable,SigningTable}
 
+# We need to at least create these files, since we reference them later.
+# Otherwise, opendkim startup will fail
+touch /etc/opendkim/KeyTable
+touch /etc/opendkim/SigningTable
+
 if grep -q "ExternalIgnoreList" /etc/opendkim.conf; then
 	true # already done #NODOC
 else
 	# Add various configuration options to the end of `opendkim.conf`.
 	cat >> /etc/opendkim.conf << EOF;
+Canonicalization		relaxed/simple
 MinimumKeyBits          1024
 ExternalIgnoreList      refile:/etc/opendkim/TrustedHosts
 InternalHosts           refile:/etc/opendkim/TrustedHosts
@@ -60,7 +66,40 @@ chmod go-rwx $STORAGE_ROOT/mail/dkim
 
 tools/editconf.py /etc/opendmarc.conf -s \
 	"Syslog=true" \
-	"Socket=inet:8893@[127.0.0.1]"
+	"Socket=inet:8893@[127.0.0.1]" \
+	"FailureReports=true"
+
+# SPFIgnoreResults causes the filter to ignore any SPF results in the header
+# of the message. This is useful if you want the filter to perfrom SPF checks
+# itself, or because you don't trust the arriving header. This added header is
+# used by spamassassin to evaluate the mail for spamminess.
+
+tools/editconf.py /etc/opendmarc.conf -s \
+        "SPFIgnoreResults=true"
+
+# SPFSelfValidate causes the filter to perform a fallback SPF check itself
+# when it can find no SPF results in the message header. If SPFIgnoreResults
+# is also set, it never looks for SPF results in headers and always performs
+# the SPF check itself when this is set. This added header is used by
+# spamassassin to evaluate the mail for spamminess.
+
+tools/editconf.py /etc/opendmarc.conf -s \
+        "SPFSelfValidate=true"
+
+# Enables generation of failure reports for sending domains that publish a
+# "none" policy.
+
+tools/editconf.py /etc/opendmarc.conf -s \
+        "FailureReportsOnNone=true"
+
+# AlwaysAddARHeader Adds an "Authentication-Results:" header field even to
+# unsigned messages from domains with no "signs all" policy. The reported DKIM
+# result will be  "none" in such cases. Normally unsigned mail from non-strict
+# domains does not cause the results header field to be added. This added header
+# is used by spamassassin to evaluate the mail for spamminess.
+
+tools/editconf.py /etc/opendkim.conf -s \
+        "AlwaysAddARHeader=true"
 
 # Add OpenDKIM and OpenDMARC as milters to postfix, which is how OpenDKIM
 # intercepts outgoing mail to perform the signing (by adding a mail header)
@@ -78,6 +117,9 @@ tools/editconf.py /etc/postfix/main.cf \
 	"smtpd_milters=inet:127.0.0.1:8891 inet:127.0.0.1:8893"\
 	non_smtpd_milters=\$smtpd_milters \
 	milter_default_action=accept
+
+# We need to explicitly enable the opendmarc service, or it will not start
+hide_output systemctl enable opendmarc
 
 # Restart services.
 restart_service opendkim
