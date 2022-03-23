@@ -105,14 +105,14 @@ source setup/mysql.sh
 source setup/mail-postfix.sh
 source setup/mail-dovecot.sh
 source setup/mail-users.sh
-source setup/solr.sh
+#source setup/solr.sh
 source setup/dkim.sh
 source setup/spamassassin.sh
 source setup/clamsmtpd.sh
 source setup/web.sh
 source setup/management.sh
 source setup/munin.sh
-source setup/sogo.sh
+#source setup/sogo.sh
 
 # Wait for the management daemon to start...
 until nc -z -w 4 127.0.0.1 10222

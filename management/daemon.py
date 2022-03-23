@@ -803,16 +803,14 @@ def log_failed_login(request):
 
 
 # APP
-
 if __name__ == '__main__':
 	if "DEBUG" in os.environ:
 		# Turn on Flask debugging.
 		app.debug = True
-
-    if not app.debug:
-        app.logger.addHandler(utils.create_syslog_handler())
+	if not app.debug:
+		app.logger.addHandler(utils.create_syslog_handler())
 
 	#app.logger.info('API key: ' + auth_service.key)
 
     # Start the application server. Listens on 127.0.0.1 (IPv4 only).
-    app.run(port=10222)
+	app.run(port=10222)
