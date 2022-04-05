@@ -11,6 +11,7 @@
 
 import subprocess, shutil, os, sqlite3, re
 import utils
+import MySQLdb
 from email_validator import validate_email as validate_email_, EmailNotValidError
 import idna
 
@@ -92,7 +93,8 @@ def is_dcv_address(email):
 	return False
 
 def open_database(env, with_connection=False):
-	conn = sqlite3.connect(env["STORAGE_ROOT"] + "/mail/users.sqlite")
+#	conn = sqlite3.connect(env["STORAGE_ROOT"] + "/mail/users.sqlite")
+	conn = MySQLdb.connect("localhost", "root", "mynewpassword", "mailinabox")
 	if not with_connection:
 		return conn.cursor()
 	else:
@@ -304,7 +306,7 @@ def add_mail_user(email, pw, privs, env):
 
 	# add the user to the database
 	try:
-		c.execute("INSERT INTO users (email, password, privileges) VALUES (?, ?, ?)",
+		c.execute("INSERT INTO users (email, password, privileges) VALUES (%s, %s, %s)",
 			(email, pw, "\n".join(privs)))
 	except sqlite3.IntegrityError:
 		return ("User already exists.", 400)
@@ -324,7 +326,7 @@ def set_mail_password(email, pw, env):
 
 	# update the database
 	conn, c = open_database(env, with_connection=True)
-	c.execute("UPDATE users SET password=? WHERE email=?", (pw, email))
+	c.execute("UPDATE users SET password=%s WHERE email=%s", (pw, email))
 	if c.rowcount != 1:
 		return ("That's not a user (%s)." % email, 400)
 	conn.commit()
@@ -342,7 +344,7 @@ def get_mail_password(email, env):
 	# http://wiki2.dovecot.org/Authentication/PasswordSchemes
 	# update the database
 	c = open_database(env)
-	c.execute('SELECT password FROM users WHERE email=?', (email,))
+	c.execute('SELECT password FROM users WHERE email=%s', (email,))
 	rows = c.fetchall()
 	if len(rows) != 1:
 		raise ValueError("That's not a user (%s)." % email)
@@ -351,7 +353,7 @@ def get_mail_password(email, env):
 def remove_mail_user(email, env):
 	# remove
 	conn, c = open_database(env, with_connection=True)
-	c.execute("DELETE FROM users WHERE email=?", (email,))
+	c.execute("DELETE FROM users WHERE email=%s", (email,))
 	if c.rowcount != 1:
 		return ("That's not a user (%s)." % email, 400)
 	conn.commit()
@@ -365,7 +367,7 @@ def parse_privs(value):
 def get_mail_user_privileges(email, env, empty_on_error=False):
 	# get privs
 	c = open_database(env)
-	c.execute('SELECT privileges FROM users WHERE email=?', (email,))
+	c.execute('SELECT privileges FROM users WHERE email=%s', (email,))
 	rows = c.fetchall()
 	if len(rows) != 1:
 		if empty_on_error: return []
@@ -397,7 +399,7 @@ def add_remove_mail_user_privilege(email, priv, action, env):
 
 	# commit to database
 	conn, c = open_database(env, with_connection=True)
-	c.execute("UPDATE users SET privileges=? WHERE email=?", ("\n".join(privs), email))
+	c.execute("UPDATE users SET privileges=%s WHERE email=%s", ("\n".join(privs), email))
 	if c.rowcount != 1:
 		return ("Something went wrong.", 400)
 	conn.commit()
@@ -484,13 +486,13 @@ def add_mail_alias(address, forwards_to, permitted_senders, env, update_if_exist
 
 	conn, c = open_database(env, with_connection=True)
 	try:
-		c.execute("INSERT INTO aliases (source, destination, permitted_senders) VALUES (?, ?, ?)", (address, forwards_to, permitted_senders))
+		c.execute("INSERT INTO aliases (source, destination, permitted_senders) VALUES (%s, %s, %s)", (address, forwards_to, permitted_senders))
 		return_status = "alias added"
 	except sqlite3.IntegrityError:
 		if not update_if_exists:
 			return ("Alias already exists (%s)." % address, 400)
 		else:
-			c.execute("UPDATE aliases SET destination = ?, permitted_senders = ? WHERE source = ?", (forwards_to, permitted_senders, address))
+			c.execute("UPDATE aliases SET destination = %s, permitted_senders = %s WHERE source = %s", (forwards_to, permitted_senders, address))
 			return_status = "alias updated"
 
 	conn.commit()
@@ -505,7 +507,7 @@ def remove_mail_alias(address, env, do_kick=True):
 
 	# remove
 	conn, c = open_database(env, with_connection=True)
-	c.execute("DELETE FROM aliases WHERE source=?", (address,))
+	c.execute("DELETE FROM aliases WHERE source=%s", (address,))
 	if c.rowcount != 1:
 		return ("That's not an alias (%s)." % address, 400)
 	conn.commit()
@@ -518,7 +520,7 @@ def add_auto_aliases(aliases, env):
 	conn, c = open_database(env, with_connection=True)
 	c.execute("DELETE FROM auto_aliases");
 	for source, destination in aliases.items():
-		c.execute("INSERT INTO auto_aliases (source, destination) VALUES (?, ?)", (source, destination))
+		c.execute("INSERT INTO auto_aliases (source, destination) VALUES (%s, %s)", (source, destination))
 	conn.commit()
 
 def get_system_administrator(env):
