@@ -1,0 +1,8 @@
+#dbpath=/home/user-data/mail/users.sqlite
+#query = SELECT 1 FROM users WHERE email='%s'
+
+user = root
+password = mynewpassword
+hosts = 127.0.0.1
+dbname = mailinabox
+query = SELECT 1 FROM users WHERE email='%s';

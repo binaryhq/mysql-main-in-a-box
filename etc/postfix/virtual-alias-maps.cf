@@ -1,0 +1,9 @@
+#dbpath=/home/user-data/mail/users.sqlite
+#query = SELECT destination from (SELECT destination, 0 as priority FROM aliases WHERE source='%s' AND destination<>'' UNION SELECT email as destination, 1 as priority FROM users WHERE email='%s' UNION SELECT destination, 2 as priority FROM auto_aliases WHERE source='%s' AND destination<>'') ORDER BY priority LIMIT 1;
+
+
+user = root
+password = mynewpassword
+hosts = 127.0.0.1
+dbname = mailinabox
+query = SELECT destination from (SELECT destination, 0 as priority FROM aliases WHERE source='%s' AND destination<>'' UNION SELECT email as destination, 1 as priority FROM users WHERE email='%s') AS u ORDER BY priority LIMIT 1;
