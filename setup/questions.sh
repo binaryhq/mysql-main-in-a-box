@@ -15,7 +15,7 @@ if [ -z "${NONINTERACTIVE:-}" ]; then
 	# Installing email_validator is repeated in setup/management.sh, but in setup/management.sh
 	# we install it inside a virtualenv. In this script, we don't have the virtualenv yet
 	# so we install the python package globally.
-	hide_output pip3 install "email_validator>=1.0.0" || exit 1
+	hide_output pip3 install "email_validator>=1.0.0" mysqlclient || exit 1
 
 	message_box "Mail-in-a-Box Installation" \
 		"Hello and thanks for deploying a Mail-in-a-Box!
@@ -205,6 +205,7 @@ if [ -z "${STORAGE_ROOT:-}" ]; then
 fi
 # DB Host
 if [ -z "${MIAB_SQL_DB_NAME:-}" ]; then	
+	MIAB_SQL_DB_NAME="mailinabox"
 	input_box "Mysql Database name" \
 			"Enter the database name:
 			\n" \
@@ -213,6 +214,7 @@ if [ -z "${MIAB_SQL_DB_NAME:-}" ]; then
 fi
 
 if [ -z "${MIAB_SQL_DB_USER:-}" ]; then	
+	MIAB_SQL_DB_USER="root"
 	input_box "Mysql Database username" \
 			"Enter the database user:
 			\n" \
@@ -220,7 +222,8 @@ if [ -z "${MIAB_SQL_DB_USER:-}" ]; then
 			MIAB_SQL_DB_USER
 fi
 
-if [ -z "${MIAB_SQL_DB_PW:-}" ]; then	
+if [ -z "${MIAB_SQL_DB_PW:-}" ]; then
+	MIAB_SQL_DB_PW="password"
 	input_box "Mysql Database passord" \
 			"Enter the database password:
 			\n" \
