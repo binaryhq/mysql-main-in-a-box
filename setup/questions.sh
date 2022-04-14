@@ -188,9 +188,44 @@ fi
 # we've already got those values from a previous run.
 if [ -z "${STORAGE_USER:-}" ]; then
 	STORAGE_USER=$([[ -z "${DEFAULT_STORAGE_USER:-}" ]] && echo "user-data" || echo "$DEFAULT_STORAGE_USER")
+	input_box "Storage user" \
+			"Enter the Storage user of this machine.
+			\n\nPublic IP address:" \
+			${STORAGE_USER:-} \
+			STORAGE_USER
 fi
+
 if [ -z "${STORAGE_ROOT:-}" ]; then
 	STORAGE_ROOT=$([[ -z "${DEFAULT_STORAGE_ROOT:-}" ]] && echo "/home/$STORAGE_USER" || echo "$DEFAULT_STORAGE_ROOT")
+	input_box "Storage root" \
+			"Enter the Storage Path of this mailbox installtion.
+			\n\nSTORAGE_ROOT:" \
+			${STORAGE_ROOT:-} \
+			STORAGE_ROOT
+fi
+# DB Host
+if [ -z "${MIAB_SQL_DB_NAME:-}" ]; then	
+	input_box "Mysql Database name" \
+			"Enter the database name:
+			\n" \
+			${MIAB_SQL_DB_NAME:-} \
+			MIAB_SQL_DB_NAME
+fi
+
+if [ -z "${MIAB_SQL_DB_USER:-}" ]; then	
+	input_box "Mysql Database username" \
+			"Enter the database user:
+			\n" \
+			${MIAB_SQL_DB_USER:-} \
+			MIAB_SQL_DB_USER
+fi
+
+if [ -z "${MIAB_SQL_DB_PW:-}" ]; then	
+	input_box "Mysql Database passord" \
+			"Enter the database password:
+			\n" \
+			${MIAB_SQL_DB_PW:-} \
+			MIAB_SQL_DB_PW
 fi
 
 # Show the configuration, since the user may have not entered it manually.

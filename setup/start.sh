@@ -95,12 +95,18 @@ PUBLIC_IPV6=$PUBLIC_IPV6
 PRIVATE_IP=$PRIVATE_IP
 PRIVATE_IPV6=$PRIVATE_IPV6
 MTA_STS_MODE=${DEFAULT_MTA_STS_MODE:-enforce}
+
+MIAB_SQL_DB_NAME=$MIAB_SQL_DB_NAME
+MIAB_SQL_DB_USER=$MIAB_SQL_DB_USER
+MIAB_SQL_DB_PW=$MIAB_SQL_DB_PW
 EOF
 
 # Start service configuration.
 source setup/system.sh
 source setup/ssl.sh
 source setup/dns.sh
+source setup/mysql.sh
+
 source setup/mail-postfix.sh
 source setup/mail-dovecot.sh
 source setup/mail-users.sh

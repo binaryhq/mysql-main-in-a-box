@@ -15,16 +15,17 @@ source /etc/mailinabox.conf # load global vars
 # The database of mail users (i.e. authenticated users, who have mailboxes)
 # and aliases (forwarders).
 
-db_path=$STORAGE_ROOT/mail/users.sqlite
+# Move create to new mysql file
+# db_path=$STORAGE_ROOT/mail/users.sqlite
 
 # Create an empty database if it doesn't yet exist.
-if [ ! -f $db_path ]; then
-	echo Creating new user database: $db_path;
-	echo "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, extra, privileges TEXT NOT NULL DEFAULT '');" | sqlite3 $db_path;
-	echo "CREATE TABLE aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL UNIQUE, destination TEXT NOT NULL, permitted_senders TEXT);" | sqlite3 $db_path;
-	echo "CREATE TABLE mfa (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, secret TEXT NOT NULL, mru_token TEXT, label TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);" | sqlite3 $db_path;
-	echo "CREATE TABLE auto_aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL UNIQUE, destination TEXT NOT NULL, permitted_senders TEXT);" | sqlite3 $db_path;
-fi
+# if [ ! -f $db_path ]; then
+# 	echo Creating new user database: $db_path;
+# 	echo "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, extra, privileges TEXT NOT NULL DEFAULT '');" | sqlite3 $db_path;
+# 	echo "CREATE TABLE aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL UNIQUE, destination TEXT NOT NULL, permitted_senders TEXT);" | sqlite3 $db_path;
+# 	echo "CREATE TABLE mfa (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, secret TEXT NOT NULL, mru_token TEXT, label TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);" | sqlite3 $db_path;
+# 	echo "CREATE TABLE auto_aliases (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL UNIQUE, destination TEXT NOT NULL, permitted_senders TEXT);" | sqlite3 $db_path;
+# fi
 
 # ### User Authentication
 
@@ -47,11 +48,11 @@ EOF
 
 # Configure the SQL to query for a user's metadata and password.
 cat > /etc/dovecot/dovecot-sql.conf.ext << EOF;
-driver = sqlite
-connect = $db_path
+driver = mysql
+connect = host=127.0.0.1 dbname=${MIAB_SQL_DB_USER} user=${MIAB_SQL_DB_USER} password=${MIAB_SQL_DB_PW}
 default_pass_scheme = SHA512-CRYPT
 password_query = SELECT email as user, password FROM users WHERE email='%u';
-user_query = SELECT email AS user, "mail" as uid, "mail" as gid, "$STORAGE_ROOT/mail/mailboxes/%d/%n" as home FROM users WHERE email='%u';
+user_query = SELECT email AS user, "mail" as uid, "mail" as gid, "${STORAGE_ROOT}/mail/mailboxes/%d/%n" as home FROM users WHERE email='%u';
 iterate_query = SELECT email AS user FROM users;
 EOF
 chmod 0600 /etc/dovecot/dovecot-sql.conf.ext # per Dovecot instructions
@@ -94,7 +95,10 @@ tools/editconf.py /etc/postfix/main.cf \
 # catch-alls and domain aliases. A NULL permitted_senders column means to
 # take the value from the destination column.
 cat > /etc/postfix/sender-login-maps.cf << EOF;
-dbpath=$db_path
+user = ${MIAB_SQL_DB_USER}
+password = ${MIAB_SQL_DB_PW}
+hosts = 127.0.0.1
+dbname = ${MIAB_SQL_DB_NAME}
 query = SELECT permitted_senders FROM (SELECT permitted_senders, 0 AS priority FROM aliases WHERE source='%s' AND permitted_senders IS NOT NULL UNION SELECT destination AS permitted_senders, 1 AS priority FROM aliases WHERE source='%s' AND permitted_senders IS NULL UNION SELECT email as permitted_senders, 2 AS priority FROM users WHERE email='%s') ORDER BY priority LIMIT 1;
 EOF
 
@@ -114,13 +118,19 @@ tools/editconf.py /etc/postfix/main.cf \
 
 # SQL statement to check if we handle incoming mail for a domain, either for users or aliases.
 cat > /etc/postfix/virtual-mailbox-domains.cf << EOF;
-dbpath=$db_path
+user = ${MIAB_SQL_DB_USER}
+password = ${MIAB_SQL_DB_PW}
+hosts = 127.0.0.1
+dbname = ${MIAB_SQL_DB_NAME}
 query = SELECT 1 FROM users WHERE email LIKE '%%@%s' UNION SELECT 1 FROM aliases WHERE source LIKE '%%@%s' UNION SELECT 1 FROM auto_aliases WHERE source LIKE '%%@%s'
 EOF
 
 # SQL statement to check if we handle incoming mail for a user.
 cat > /etc/postfix/virtual-mailbox-maps.cf << EOF;
-dbpath=$db_path
+user = ${MIAB_SQL_DB_USER}
+password = ${MIAB_SQL_DB_PW}
+hosts = 127.0.0.1
+dbname = ${MIAB_SQL_DB_NAME}
 query = SELECT 1 FROM users WHERE email='%s'
 EOF
 
@@ -149,7 +159,10 @@ EOF
 # it might have just permitted_senders, skip any records with an
 # empty destination here so that other lower priority rules might match.
 cat > /etc/postfix/virtual-alias-maps.cf << EOF;
-dbpath=$db_path
+user = ${MIAB_SQL_DB_USER}
+password = ${MIAB_SQL_DB_PW}
+hosts = 127.0.0.1
+dbname = ${MIAB_SQL_DB_NAME}
 query = SELECT destination from (SELECT destination, 0 as priority FROM aliases WHERE source='%s' AND destination<>'' UNION SELECT email as destination, 1 as priority FROM users WHERE email='%s' UNION SELECT destination, 2 as priority FROM auto_aliases WHERE source='%s' AND destination<>'') ORDER BY priority LIMIT 1;
 EOF
 

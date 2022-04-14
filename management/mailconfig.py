@@ -94,7 +94,7 @@ def is_dcv_address(email):
 
 def open_database(env, with_connection=False):
 #	conn = sqlite3.connect(env["STORAGE_ROOT"] + "/mail/users.sqlite")
-	conn = MySQLdb.connect("localhost", "root", "mynewpassword", "mailinabox")
+	conn = MySQLdb.connect("localhost", env["MIAB_SQL_DB_USER"], env["MIAB_SQL_DB_PW"],env["MIAB_SQL_DB_NAME"])
 	if not with_connection:
 		return conn.cursor()
 	else:
