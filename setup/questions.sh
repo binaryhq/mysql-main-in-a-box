@@ -205,29 +205,29 @@ if [ -z "${STORAGE_ROOT:-}" ]; then
 fi
 # DB Host
 if [ -z "${MIAB_SQL_DB_NAME:-}" ]; then	
-	MIAB_SQL_DB_NAME="mailinabox"
+	DEFAULT_MIAB_SQL_DB_NAME=$([[ -z "${DEFAULT_MIAB_SQL_DB_NAME:-}" ]] && echo "mailinabox" || echo "$DEFAULT_MIAB_SQL_DB_NAME")
 	input_box "Mysql Database name" \
 			"Enter the database name:
 			\n" \
-			${MIAB_SQL_DB_NAME:-} \
+			${DEFAULT_MIAB_SQL_DB_NAME:-} \
 			MIAB_SQL_DB_NAME
 fi
 
 if [ -z "${MIAB_SQL_DB_USER:-}" ]; then	
-	MIAB_SQL_DB_USER="root"
+	DEFAULT_MIAB_SQL_DB_USER=$([[ -z "${DEFAULT_MIAB_SQL_DB_USER:-}" ]] && echo "root" || echo "$DEFAULT_MIAB_SQL_DB_USER")
 	input_box "Mysql Database username" \
 			"Enter the database user:
 			\n" \
-			${MIAB_SQL_DB_USER:-} \
+			${DEFAULT_MIAB_SQL_DB_USER:-} \
 			MIAB_SQL_DB_USER
 fi
 
 if [ -z "${MIAB_SQL_DB_PW:-}" ]; then
-	MIAB_SQL_DB_PW="password"
+	DEFAULT_MIAB_SQL_DB_PW=$([[ -z "${DEFAULT_MIAB_SQL_DB_PW:-}" ]] && echo "password" || echo "$DEFAULT_MIAB_SQL_DB_PW")
 	input_box "Mysql Database passord" \
 			"Enter the database password:
 			\n" \
-			${MIAB_SQL_DB_PW:-} \
+			${DEFAULT_MIAB_SQL_DB_PW:-} \
 			MIAB_SQL_DB_PW
 fi
 
