@@ -61,21 +61,21 @@ chmod 0600 /etc/dovecot/dovecot-sql.conf.ext # per Dovecot instructions
 cat > /etc/dovecot/dovecot-dict-sql.conf.ext << EOF;
 connect = host=127.0.0.1 dbname=${MIAB_SQL_DB_NAME} port=3306 user=${MIAB_SQL_DB_USER} password=${MIAB_SQL_DB_PW}
 map {
-    pattern = shared/shared-boxes/user/$to/$from
+    pattern = shared/shared-boxes/user/\$to/\$from
     table = user_shares
     value_field = dummy
     fields {
-        from_user = $from
-        to_user = $to
+        from_user = \$from
+        to_user = \$to
     }
 }
 
 map {
-    pattern = shared/shared-boxes/anyone/$from
+    pattern = shared/shared-boxes/anyone/\$from
     table = anyone_shares
     value_field = dummy
     fields {
-        from_user = $from
+        from_user = \$from
     }
 }
 EOF
