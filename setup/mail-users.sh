@@ -50,7 +50,7 @@ EOF
 cat > /etc/dovecot/dovecot-sql.conf.ext << EOF;
 driver = mysql
 connect = host=127.0.0.1 dbname=${MIAB_SQL_DB_USER} user=${MIAB_SQL_DB_USER} password=${MIAB_SQL_DB_PW}
-default_pass_scheme = SHA512-CRYPT
+default_pass_scheme = SSHA256
 password_query = SELECT email as user, password FROM users WHERE email='%u';
 user_query = SELECT email AS user, "mail" as uid, "mail" as gid, "${STORAGE_ROOT}/mail/mailboxes/%d/%n" as home FROM users WHERE email='%u';
 iterate_query = SELECT email AS user FROM users;
