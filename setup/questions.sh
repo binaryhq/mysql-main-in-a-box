@@ -9,9 +9,15 @@ if [ -z "${NONINTERACTIVE:-}" ]; then
 	if [ ! -f /usr/bin/dialog ] || [ ! -f /usr/bin/python3 ] || [ ! -f /usr/bin/pip3 ]; then
 		echo Installing packages needed for setup...
 		apt-get -q -q update
-		apt_get_quiet install dialog python3 python3-pip  || exit 1
+		apt_get_quiet install dialog python3 python3-pip  mysql-server default-libmysqlclient-dev build-essential libmysqlclient-dev || exit 1
 	fi
 
+	if [ -f /etc/init.d/mysql* ]; then
+		echo Installation continueing with mysql...
+	else 
+		echo Installing mysql server and related packages...
+		apt_get_quiet install  mysql-server default-libmysqlclient-dev build-essential libmysqlclient-dev || exit 1
+	fi
 	# Installing email_validator is repeated in setup/management.sh, but in setup/management.sh
 	# we install it inside a virtualenv. In this script, we don't have the virtualenv yet
 	# so we install the python package globally.

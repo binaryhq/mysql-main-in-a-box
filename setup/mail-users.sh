@@ -49,13 +49,37 @@ EOF
 # Configure the SQL to query for a user's metadata and password.
 cat > /etc/dovecot/dovecot-sql.conf.ext << EOF;
 driver = mysql
-connect = host=127.0.0.1 dbname=${MIAB_SQL_DB_USER} user=${MIAB_SQL_DB_USER} password=${MIAB_SQL_DB_PW}
+connect = host=127.0.0.1 dbname=${MIAB_SQL_DB_NAME} user=${MIAB_SQL_DB_USER} password=${MIAB_SQL_DB_PW}
 default_pass_scheme = SSHA256
 password_query = SELECT email as user, password FROM users WHERE email='%u';
 user_query = SELECT email AS user, "mail" as uid, "mail" as gid, "${STORAGE_ROOT}/mail/mailboxes/%d/%n" as home FROM users WHERE email='%u';
 iterate_query = SELECT email AS user FROM users;
 EOF
 chmod 0600 /etc/dovecot/dovecot-sql.conf.ext # per Dovecot instructions
+
+# Configure the SQL to query for a user's metadata and password.
+cat > /etc/dovecot/dovecot-dict-sql.conf.ext << EOF;
+connect = host=127.0.0.1 dbname=${MIAB_SQL_DB_NAME} port=3306 user=${MIAB_SQL_DB_USER} password=${MIAB_SQL_DB_PW}
+map {
+    pattern = shared/shared-boxes/user/$to/$from
+    table = user_shares
+    value_field = dummy
+    fields {
+        from_user = $from
+        to_user = $to
+    }
+}
+
+map {
+    pattern = shared/shared-boxes/anyone/$from
+    table = anyone_shares
+    value_field = dummy
+    fields {
+        from_user = $from
+    }
+}
+EOF
+chmod 0600 /etc/dovecot/dovecot-dict-sql.conf.ext # per Dovecot instructions
 
 # Have Dovecot provide an authorization service that Postfix can access & use.
 cat > /etc/dovecot/conf.d/99-local-auth.conf << EOF;
@@ -66,6 +90,13 @@ service auth {
     group = postfix
   }
 }
+dict {
+  #quota = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
+  #expire = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
+  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
+
+}
+
 EOF
 
 # And have Postfix use that service. We *disable* it here
@@ -87,7 +118,7 @@ tools/editconf.py /etc/postfix/main.cf \
 # who authenticated. An SQL query will find who are the owners of any given
 # address.
 tools/editconf.py /etc/postfix/main.cf \
-	smtpd_sender_login_maps=sqlite:/etc/postfix/sender-login-maps.cf
+	smtpd_sender_login_maps=mysql:/etc/postfix/sender-login-maps.cf
 
 # Postfix will query the exact address first, where the priority will be alias
 # records first, then user records. If there are no matches for the exact
@@ -111,9 +142,9 @@ EOF
 # bounce.
 tools/editconf.py /etc/postfix/main.cf \
 	smtputf8_enable=no \
-	virtual_mailbox_domains=sqlite:/etc/postfix/virtual-mailbox-domains.cf \
-	virtual_mailbox_maps=sqlite:/etc/postfix/virtual-mailbox-maps.cf \
-	virtual_alias_maps=sqlite:/etc/postfix/virtual-alias-maps.cf \
+	virtual_mailbox_domains=mysql:/etc/postfix/virtual-mailbox-domains.cf \
+	virtual_mailbox_maps=mysql:/etc/postfix/virtual-mailbox-maps.cf \
+	virtual_alias_maps=mysql:/etc/postfix/virtual-alias-maps.cf \
 	local_recipient_maps=\$virtual_mailbox_maps
 
 # SQL statement to check if we handle incoming mail for a domain, either for users or aliases.

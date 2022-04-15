@@ -141,8 +141,8 @@ echo Installing system packages...
 apt_install python3 python3-dev python3-pip python3-setuptools \
 	netcat-openbsd wget curl git sudo coreutils bc \
 	haveged pollinate openssh-client unzip \
-	unattended-upgrades cron ntp fail2ban rsyslog \
-	mysql-server default-libmysqlclient-dev build-essential
+	unattended-upgrades cron ntp fail2ban rsyslog
+	
 
 # ### Suppress Upgrade Prompts
 # When Ubuntu 20 comes out, we don't want users to be prompted to upgrade,
