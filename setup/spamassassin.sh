@@ -147,7 +147,7 @@ chown -R spampd:spampd $STORAGE_ROOT/mail/spamassassin
 
 # Enable the Dovecot antispam plugin.
 # (Be careful if we use multiple plugins later.) #NODOC
-sed -i "s/#mail_plugins = .*/mail_plugins = \$mail_plugins antispam/" /etc/dovecot/conf.d/20-imap.conf
+sed -i "s/#mail_plugins = .*/mail_plugins = \$mail_plugins antispam imap_acl/" /etc/dovecot/conf.d/20-imap.conf
 sed -i "s/#mail_plugins = .*/mail_plugins = \$mail_plugins antispam/" /etc/dovecot/conf.d/20-pop3.conf
 
 # Configure the antispam plugin to call sa-learn-pipe.sh.

@@ -187,41 +187,8 @@ plugin {
 }
 EOF
 
-cat > /etc/dovecot/conf.d/10-master.conf << EOF;
-service dict {
-  # If dict proxy is used, mail processes should have access to its socket.
-  # For example: mode=0660, group=vmail and global mail_access_groups=vmail
-  unix_listener dict {
-    mode = 0600
-    user = mail
-    group = mail
-  }
-}
-EOF
-cat > /etc/dovecot/conf.d/10-mail.conf << EOF;
-namespace {
-  type = shared
-  separator = /
-  prefix = shared/%%u/
-  location = maildir:${STORAGE_ROOT}/mail/mailboxes/%%d/%%n/Maildir:INDEXPVT=${STORAGE_ROOT}/mail/mailboxes/%d/%n/Maildir/shared/%%u
-  subscriptions = no
-  list = children
-}
-EOF
 
-cat > /etc/dovecot/conf.d/90-acl.conf << EOF;
-plugin {
-  acl = vfile
-}
 
-plugin {
-  acl_shared_dict = proxy::acl
-}
-
-dict {
-  acl = mysql:/etc/dovecot/dovecot-dict-sql.conf.ext
-}
-EOF
 # Copy the global sieve script into where we've told Dovecot to look for it. Then
 # compile it. Global scripts must be compiled now because Dovecot won't have
 # permission later.
