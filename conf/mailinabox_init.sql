@@ -144,3 +144,5 @@ ALTER TABLE `shared_mailbox`
 --
 ALTER TABLE `users`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+
+DROP USER 'root'@'localhost';

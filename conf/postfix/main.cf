@@ -1,0 +1,94 @@
+# See /usr/share/postfix/main.cf.dist for a commented, more complete version
+
+
+# Debian specific:  Specifying a file name will cause the first
+# line of that file to be used as the name.  The Debian default
+# is /etc/mailname.
+#myorigin = /etc/mailname
+
+#smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)
+smtpd_banner=$myhostname ESMTP Hi, I'm a Mail-in-a-Box (Ubuntu/Postfix; see https://mailinabox.email/)
+biff = no
+
+# appending .domain is the MUA's job.
+append_dot_mydomain = no
+
+# Uncomment the next line to generate "delayed mail" warnings
+#delay_warning_time = 4h
+delay_warning_time=3h
+
+readme_directory = no
+
+# See http://www.postfix.org/COMPATIBILITY_README.html -- default to 2 on
+# fresh installs.
+compatibility_level = 2
+
+# TLS parameters
+#smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_cert_file=/mail-data/user-data/ssl/ssl_certificate.pem
+#smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_key_file=/mail-data/user-data/ssl/ssl_private_key.pem
+smtpd_use_tls=yes
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+# See /usr/share/doc/postfix/TLS_README.gz in the postfix-doc package for
+# information on enabling SSL in the smtp client.
+
+#smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+smtpd_relay_restrictions=permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination
+myhostname = box.inoexpert.com
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+myorigin = /etc/mailname
+#mydestination = $myhostname, box.inoexpert.com, localhost.inoexpert.com, , localhost
+mydestination=localhost
+relayhost = 
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mailbox_size_limit = 0
+recipient_delimiter = +
+inet_interfaces = all
+inet_protocols = all
+smtp_bind_address=172.31.43.105
+smtp_bind_address6=
+maximal_queue_lifetime=2d
+bounce_queue_lifetime=1d
+smtpd_tls_security_level=may
+smtpd_tls_auth_only=yes
+smtpd_tls_dh1024_param_file=/mail-data/user-data/ssl/dh2048.pem
+smtpd_tls_protocols=!SSLv2,!SSLv3
+smtpd_tls_ciphers=medium
+tls_medium_cipherlist=ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA256:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA
+smtpd_tls_exclude_ciphers=aNULL,RC4
+tls_preempt_cipherlist=no
+smtpd_tls_received_header=yes
+smtpd_tls_mandatory_protocols=!SSLv2,!SSLv3,!TLSv1,!TLSv1.1
+smtpd_tls_mandatory_ciphers=high
+tls_high_cipherlist=ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
+smtpd_tls_mandatory_exclude_ciphers=aNULL,DES,3DES,MD5,DES+MD5,RC4
+smtp_tls_protocols=!SSLv2,!SSLv3
+smtp_tls_ciphers=medium
+smtp_tls_exclude_ciphers=aNULL,RC4
+smtp_tls_security_level=dane
+smtp_dns_support_level=dnssec
+smtp_tls_mandatory_protocols=!SSLv2,!SSLv3,!TLSv1,!TLSv1.1
+smtp_tls_mandatory_ciphers=high
+smtp_tls_CAfile=/etc/ssl/certs/ca-certificates.crt
+smtp_tls_loglevel=2
+virtual_transport=lmtp:[127.0.0.1]:10025
+lmtp_destination_recipient_limit=1
+smtpd_sender_restrictions=reject_non_fqdn_sender,reject_unknown_sender_domain,reject_authenticated_sender_login_mismatch,reject_rhsbl_sender dbl.spamhaus.org
+smtpd_recipient_restrictions=permit_sasl_authenticated,permit_mynetworks,reject_rbl_client zen.spamhaus.org,reject_unlisted_recipient,check_policy_service inet:127.0.0.1:10023
+message_size_limit=134217728
+smtpd_sasl_type=dovecot
+smtpd_sasl_path=private/auth
+smtpd_sasl_auth_enable=no
+smtpd_sender_login_maps=mysql:/etc/postfix/sender-login-maps.cf
+smtputf8_enable=no
+virtual_mailbox_domains=mysql:/etc/postfix/virtual-mailbox-domains.cf
+virtual_mailbox_maps=mysql:/etc/postfix/virtual-mailbox-maps.cf
+virtual_alias_maps=mysql:/etc/postfix/virtual-alias-maps.cf
+local_recipient_maps=$virtual_mailbox_maps
+smtpd_milters=inet:127.0.0.1:8891 inet:127.0.0.1:8893
+non_smtpd_milters=$smtpd_milters
+milter_default_action=accept
