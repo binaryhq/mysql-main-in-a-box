@@ -1,4 +1,4 @@
-connect = host=127.0.0.1 dbname=mailinabox port=3306 user=root password=newpassword
+connect = host=127.0.0.1 dbname=mailinabox port=3306 user=root password=9h!d-EZzp4f9Wx-S
 map {
     pattern = shared/shared-boxes/user/$to/$from    
     table = shared_mailbox
